@@ -42,6 +42,7 @@ def _validate_input(
     n_steps: int = 50,
     method: str = "riemann_trapezoid",
     draw_baseline_from_distrib: bool = False,
+    interpolation_order: List[int] = None,
 ) -> None:
     _validate_input_basic(inputs, baselines, draw_baseline_from_distrib)
     assert (
@@ -53,6 +54,10 @@ def _validate_input(
     ), "Approximation method must be one for the following {}. " "Given {}".format(
         SUPPORTED_METHODS, method
     )
+
+    assert (
+        interpolation_order is None or len(interpolation_order) == n_steps
+    ), "n_steps is not equal to length of interpolation_order."
 
 
 def _validate_noise_tunnel_type(

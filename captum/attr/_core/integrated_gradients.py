@@ -88,6 +88,7 @@ class IntegratedGradients(GradientAttribution):
         method: str = "gausslegendre",
         internal_batch_size: Union[None, int] = None,
         return_convergence_delta: Literal[False] = False,
+        interpolation_order: List[int] = None,
     ) -> TensorOrTupleOfTensorsGeneric:
         ...
 
@@ -103,6 +104,7 @@ class IntegratedGradients(GradientAttribution):
         internal_batch_size: Union[None, int] = None,
         *,
         return_convergence_delta: Literal[True],
+        interpolation_order: List[int] = None,
     ) -> Tuple[TensorOrTupleOfTensorsGeneric, Tensor]:
         ...
 
@@ -117,6 +119,7 @@ class IntegratedGradients(GradientAttribution):
         method: str = "gausslegendre",
         internal_batch_size: Union[None, int] = None,
         return_convergence_delta: bool = False,
+        interpolation_order: List[int] = None,
     ) -> Union[
         TensorOrTupleOfTensorsGeneric, Tuple[TensorOrTupleOfTensorsGeneric, Tensor]
     ]:
@@ -231,6 +234,9 @@ class IntegratedGradients(GradientAttribution):
                     is set to True convergence delta will be returned in
                     a tuple following attributions.
                     Default: False
+            interpolation_order (list): List of orders for all nodes for how they
+                    should be interpolated for dependency-guided IG.
+                    Default: None
         Returns:
             **attributions** or 2-element tuple of **attributions**, **delta**:
             - **attributions** (*tensor* or tuple of *tensors*):
@@ -267,7 +273,7 @@ class IntegratedGradients(GradientAttribution):
 
         inputs, baselines = _format_input_baseline(inputs, baselines)
 
-        _validate_input(inputs, baselines, n_steps, method)
+        _validate_input(inputs, baselines, n_steps, method, interpolation_order)
 
         if internal_batch_size is not None:
             num_examples = inputs[0].shape[0]
@@ -290,6 +296,7 @@ class IntegratedGradients(GradientAttribution):
                 additional_forward_args=additional_forward_args,
                 n_steps=n_steps,
                 method=method,
+                interpolation_order=interpolation_order,        
             )
 
         if return_convergence_delta:
@@ -314,6 +321,7 @@ class IntegratedGradients(GradientAttribution):
         n_steps: int = 50,
         method: str = "gausslegendre",
         step_sizes_and_alphas: Union[None, Tuple[List[float], List[float]]] = None,
+        interpolation_order: List[int] = None,
     ) -> Tuple[Tensor, ...]:
         if step_sizes_and_alphas is None:
             # retrieve step size and scaling factor for specified
@@ -322,15 +330,30 @@ class IntegratedGradients(GradientAttribution):
             step_sizes, alphas = step_sizes_func(n_steps), alphas_func(n_steps)
         else:
             step_sizes, alphas = step_sizes_and_alphas
-
-        # scale features and compute gradients. (batch size is abbreviated as bsz)
-        # scaled_features' dim -> (bsz * #steps x inputs[0].shape[1:], ...)
-        scaled_features_tpl = tuple(
-            torch.cat(
-                [baseline + alpha * (input - baseline) for alpha in alphas], dim=0
-            ).requires_grad_()
-            for input, baseline in zip(inputs, baselines)
-        )
+        
+        if method == "dependency_guided_ig":
+            scaled_features_tpl = []
+            for original_input, baseline in zip(inputs, baselines):
+                interpolated_inputs = []
+                for i in range(n_steps):
+                    interpolated_input = torch.clone(original_input)
+                    # This line zeros features of nodes that are topologically greater the
+                    # i-th in the given input
+                    interpolated_input[interpolation_order[i:]] = 0.0
+                    interpolated_input = baseline + alphas[i] * (interpolated_input - baseline)
+                    interpolated_inputs.append(interpolated_input)
+                interpolated_inputs = torch.cat(interpolated_inputs, dim=0).requires_grad_()
+                scaled_features_tpl.append(interpolated_inputs)
+            scaled_features_tpl = tuple(scaled_features_tpl)
+        else:
+            # scale features and compute gradients. (batch size is abbreviated as bsz)
+            # scaled_features' dim -> (bsz * #steps x inputs[0].shape[1:], ...)
+            scaled_features_tpl = tuple(
+                torch.cat(
+                    [baseline + alpha * (input - baseline) for alpha in alphas], dim=0
+                ).requires_grad_()
+                for input, baseline in zip(inputs, baselines)
+            )
 
         additional_forward_args = _format_additional_forward_args(
             additional_forward_args

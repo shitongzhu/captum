@@ -19,7 +19,7 @@ SUPPORTED_RIEMANN_METHODS = [
     "riemann_trapezoid",
 ]
 
-SUPPORTED_METHODS = SUPPORTED_RIEMANN_METHODS + ["gausslegendre"]
+SUPPORTED_METHODS = SUPPORTED_RIEMANN_METHODS + ["gausslegendre"] + ["dependency_guided_ig"]
 
 
 def approximation_parameters(
@@ -35,7 +35,23 @@ def approximation_parameters(
         return riemann_builders(method=Riemann[method.split("_")[-1]])
     if method == "gausslegendre":
         return gauss_legendre_builders()
+    if method == "dependency_guided_ig":
+        return dependency_guided_ig_builders()
     raise ValueError("Invalid integral approximation method name: {}".format(method))
+
+
+def dependency_guided_ig_builders() -> Tuple[
+    Callable[[int], List[float]], Callable[[int], List[float]]
+]:
+    def step_sizes(n: int) -> List[float]:
+        assert n > 1, "The number of steps has to be larger than one"
+        deltas = [1 / n] * n
+        return deltas
+
+    def alphas(n: int) -> List[float]:
+        return torch.linspace(0, 1, n).tolist()
+
+    return step_sizes, alphas
 
 
 def riemann_builders(

@@ -452,6 +452,8 @@ def _run_forward(
         if additional_forward_args is not None
         else inputs
     )
+    if isinstance(output, tuple):
+        output = output[1]
     return _select_targets(output, target)
 
 
