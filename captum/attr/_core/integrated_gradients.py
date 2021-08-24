@@ -120,6 +120,7 @@ class IntegratedGradients(GradientAttribution):
         internal_batch_size: Union[None, int] = None,
         return_convergence_delta: bool = False,
         interpolation_order: List[int] = None,
+        accumulate_gradients: bool = True,
     ) -> Union[
         TensorOrTupleOfTensorsGeneric, Tuple[TensorOrTupleOfTensorsGeneric, Tensor]
     ]:
@@ -237,6 +238,9 @@ class IntegratedGradients(GradientAttribution):
             interpolation_order (list): List of orders for all nodes for how they
                     should be interpolated for dependency-guided IG.
                     Default: None
+            accumulate_gradients (bool): Whether to accumulatively add up gradients
+                    across all interpolated inputs.
+                    Default: True
         Returns:
             **attributions** or 2-element tuple of **attributions**, **delta**:
             - **attributions** (*tensor* or tuple of *tensors*):
@@ -296,7 +300,8 @@ class IntegratedGradients(GradientAttribution):
                 additional_forward_args=additional_forward_args,
                 n_steps=n_steps,
                 method=method,
-                interpolation_order=interpolation_order,        
+                interpolation_order=interpolation_order,
+                accumulate_gradients=accumulate_gradients,
             )
 
         if return_convergence_delta:
@@ -322,6 +327,7 @@ class IntegratedGradients(GradientAttribution):
         method: str = "gausslegendre",
         step_sizes_and_alphas: Union[None, Tuple[List[float], List[float]]] = None,
         interpolation_order: List[int] = None,
+        accumulate_gradients: bool = True,
     ) -> Tuple[Tensor, ...]:
         if step_sizes_and_alphas is None:
             # retrieve step size and scaling factor for specified
@@ -337,10 +343,16 @@ class IntegratedGradients(GradientAttribution):
                 interpolated_inputs = []
                 for i in range(n_steps):
                     interpolated_input = torch.clone(original_input)
-                    # This line zeros features of nodes that are topologically greater the
-                    # i-th in the given input
-                    interpolated_input[interpolation_order[i:]] = 0.0
-                    interpolated_input = baseline + alphas[i] * (interpolated_input - baseline)
+                    if accumulate_gradients:
+                        # This line zeros features of nodes that are topologically greater the
+                        # i-th in the given input
+                        interpolated_input[interpolation_order[i:]] = 0.0
+                        interpolated_input = baseline + alphas[i] * (interpolated_input - baseline)
+                    else:
+                        # This line zeros features of nodes that are NOT topologically equal to
+                        # the i-th in the given input
+                        interpolated_input[:interpolation_order[i]] = 0.0
+                        interpolated_input[interpolation_order[i] + 1:] = 0.0
                     interpolated_inputs.append(interpolated_input)
                 interpolated_inputs = torch.cat(interpolated_inputs, dim=0).requires_grad_()
                 scaled_features_tpl.append(interpolated_inputs)
