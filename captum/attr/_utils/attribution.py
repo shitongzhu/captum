@@ -292,6 +292,11 @@ class GradientAttribution(Attribution):
             attr_sum = torch.stack(
                 [cast(Tensor, sum(row_sum)) for row_sum in zip(*row_sums)]
             )
+            #print(attribution.shape)
+            #print(attr_sum.shape)
+            #print(end_out_sum.shape)
+            #print(start_out_sum.shape)
+            #print(additional_forward_args)
             _delta = attr_sum - (end_out_sum - start_out_sum)
         return _delta
 

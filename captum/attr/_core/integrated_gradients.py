@@ -330,7 +330,7 @@ class IntegratedGradients(GradientAttribution):
             step_sizes, alphas = step_sizes_func(n_steps), alphas_func(n_steps)
         else:
             step_sizes, alphas = step_sizes_and_alphas
-        
+
         if method == "dependency_guided_ig":
             scaled_features_tpl = []
             for original_input, baseline in zip(inputs, baselines):
