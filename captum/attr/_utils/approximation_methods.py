@@ -19,7 +19,7 @@ SUPPORTED_RIEMANN_METHODS = [
     "riemann_trapezoid",
 ]
 
-SUPPORTED_METHODS = SUPPORTED_RIEMANN_METHODS + ["gausslegendre"] + ["dependency_guided_ig"]
+SUPPORTED_METHODS = SUPPORTED_RIEMANN_METHODS + ["gausslegendre", "dependency_guided_ig", "dependency_guided_ig_nonuniform"]
 
 
 def approximation_parameters(
@@ -37,7 +37,33 @@ def approximation_parameters(
         return gauss_legendre_builders()
     if method == "dependency_guided_ig":
         return dependency_guided_ig_builders()
+    if method == "dependency_guided_ig_nonuniform":
+        return dependency_guided_ig_nonuniform_builders()
     raise ValueError("Invalid integral approximation method name: {}".format(method))
+
+
+def dependency_guided_ig_nonuniform_builders() -> Tuple[
+    Callable[[int], List[float]], Callable[[int], List[float]]
+]:
+    def step_sizes(raw_in: List[float], interpolation_order: List[int]) -> List[float]:
+        raw_in_sum = torch.sum(raw_in)
+        deltas = []
+        for i in range(len(interpolation_order)):
+            curr_step_raw_in_sum = torch.sum(raw_in[interpolation_order[i]])
+            delta = curr_step_raw_in_sum / raw_in_sum
+            deltas.append(delta)
+        return deltas
+
+    def alphas(raw_in: List[float], interpolation_order: List[int]) -> List[float]:
+        raw_in_sum = torch.sum(raw_in)
+        alphas = []
+        for i in range(len(interpolation_order)):
+            accmulated_curr_step_raw_in_sum = torch.sum(raw_in[interpolation_order[:i]])
+            alpha = accmulated_curr_step_raw_in_sum / raw_in_sum
+            alphas.append(alpha)
+        return alphas
+
+    return step_sizes, alphas
 
 
 def dependency_guided_ig_builders() -> Tuple[

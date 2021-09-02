@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import typing
 from typing import Any, Callable, List, Tuple, Union
+import datetime
 
 import torch
 from torch import Tensor
@@ -333,7 +334,11 @@ class IntegratedGradients(GradientAttribution):
             # retrieve step size and scaling factor for specified
             # approximation method
             step_sizes_func, alphas_func = approximation_parameters(method)
-            step_sizes, alphas = step_sizes_func(n_steps), alphas_func(n_steps)
+            if method == "dependency_guided_ig_nonuniform":
+                step_sizes, alphas = step_sizes_func(
+                    inputs[0], interpolation_order), alphas_func(inputs[0], interpolation_order)
+            else:
+                step_sizes, alphas = step_sizes_func(n_steps), alphas_func(n_steps)
         else:
             step_sizes, alphas = step_sizes_and_alphas
 
