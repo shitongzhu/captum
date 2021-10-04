@@ -2,6 +2,7 @@
 import typing
 from typing import Any, Callable, List, Tuple, Union
 import datetime
+from copy import deepcopy
 
 import torch
 from torch import Tensor
@@ -344,15 +345,16 @@ class IntegratedGradients(GradientAttribution):
             step_sizes, alphas = step_sizes_and_alphas
 
         # scaled_features' dim -> (bsz * #steps * inputs[0].shape[1:], ...)
+        scaled_features_tpl_list = []
         if method.startswith("dependency_guided_ig"):
-            scaled_features_tpl_list = []
             removed_nodes_seq = []
             assert len(inputs) == 1, "[ERROR] Multiple inputs is not supported yet!"
             original_input = inputs[0]
             baseline = baselines[0]
             interpolated_inputs = []
+            
             for i in range(n_steps):
-                interpolated_input = torch.clone(original_input)
+                interpolated_input = original_input.clone().detach()
                 removed_nodes = []
                 if accumulate_gradients:
                     # This line zeros features of nodes that are topologically greater the
@@ -366,17 +368,19 @@ class IntegratedGradients(GradientAttribution):
                     interpolated_input[:interpolation_order[i]] = 0.0
                     interpolated_input[interpolation_order[i] + 1:] = 0.0
                     removed_nodes = list(range(interpolation_order[i])) + list(range(interpolation_order[i] + 1, interpolated_input.shape[0]))
-                interpolated_inputs.append(tuple(interpolated_input.requires_grad_()))
+                interpolated_inputs.append(interpolated_input.requires_grad_())
                 removed_nodes_seq.append(removed_nodes)
             scaled_features_tpl_list = interpolated_inputs
         else:
             removed_nodes_seq = None
+            original_input = inputs[0]
+            baseline = baselines[0]
             # scale features and compute gradients. (batch size is abbreviated as bsz)
             # scaled_features' dim -> (bsz * #steps * inputs[0].shape[1:], ...)
-            scaled_features_tpl_list = tuple(
-                [(baseline + alpha * (input - baseline)).requires_grad_() for alpha in alphas]
-                for input, baseline in zip(inputs, baselines)
-            )
+            for i in range(n_steps):
+                scaled_features_tpl_list.append(
+                    (baseline + alphas[i] * (original_input - baseline)).requires_grad_()
+                )
 
         additional_forward_args = _format_additional_forward_args(
             additional_forward_args
@@ -391,40 +395,29 @@ class IntegratedGradients(GradientAttribution):
         # (2) if mixed_expansion == False
         # individually expand additional_forward_args for each interpolated input
         # dim -> (bsz * #steps * additional_forward_args[0].shape[1:], ...)
-        input_additional_args = (
+        input_additional_args_list = (
             _expand_additional_forward_args(additional_forward_args, n_steps, removed_nodes_seq=removed_nodes_seq)
             if additional_forward_args is not None
             else None
         )
 
-        expanded_target = _expand_target(target, n_steps)
+        target_list = [deepcopy(target)] * n_steps
 
-        if method.startswith("dependency_guided_ig"):
-            # we need to seperately handle each interpolation, simply because in current
-            # captum, all interpolated inputs are stacked and evaluated against the "extended"
-            # input_additional_args -- instead we want to individually process these interpolated
-            # inputs so that each interpolated input_additional_args can correspond to the input
-            # (shape not altered) grads: dim -> (bsz * #steps x inputs[0].shape[1:], ...)
-            grads_list = []
-            for i in range(n_steps):
-                print("curr input_additional_args: %s" % str(input_additional_args[i]))
-                grads = self.gradient_func(
-                    forward_fn=self.forward_func,
-                    inputs=scaled_features_tpl_list[i],
-                    target_ind=target,
-                    additional_forward_args=input_additional_args[i],
-                )
-                grads_list.append(grads)
-            grads = torch.stack(grads_list, dim=0)
-        else:
-            # grads: dim -> (bsz * #steps x inputs[0].shape[1:], ...)
-            print("curr input_additional_args: %s" % str(input_additional_args))
+        # we need to seperately handle each interpolation, simply because in current
+        # captum, all interpolated inputs are stacked and evaluated against the "extended"
+        # input_additional_args -- instead we want to individually process these interpolated
+        # inputs so that each interpolated input_additional_args can correspond to the input
+        # (shape not altered) grads: dim -> (bsz * #steps x inputs[0].shape[1:], ...)
+        grads_list = []
+        for i in range(n_steps):
             grads = self.gradient_func(
                 forward_fn=self.forward_func,
-                inputs=scaled_features_tpl,
-                target_ind=expanded_target,
-                additional_forward_args=input_additional_args,
-            )
+                inputs=scaled_features_tpl_list[i],
+                target_ind=target_list[i],
+                additional_forward_args=input_additional_args_list[i],
+            )[0]
+            grads_list.append(grads)
+        grads = torch.stack(grads_list)
 
         # flattening grads so that we can multilpy it with step-size
         # calling contiguous to avoid `memory whole` problems

@@ -240,35 +240,19 @@ def _expand_additional_forward_args(
     _EDGE_LISTS_IDX = 1
     _POS_LISTS_IDX = 3
 
-    def _expand_tensor_forward_arg(
-        additional_forward_arg: Tensor,
-        n_steps: int,
-        expansion_type: ExpansionTypes = ExpansionTypes.repeat,
-    ) -> Tensor:
-        if len(additional_forward_arg.size()) == 0:
-            return additional_forward_arg
-        if expansion_type == ExpansionTypes.repeat:
-            return torch.cat([additional_forward_arg] * n_steps, dim=0)
-        elif expansion_type == ExpansionTypes.repeat_interleave:
-            return additional_forward_arg.repeat_interleave(n_steps, dim=0)
-        else:
-            raise NotImplementedError(
-                "Currently only `repeat` and `repeat_interleave` expansion_types are supported"
-            )
-
     if additional_forward_args is None:
         return None
 
     expanded = []
     if removed_nodes_seq is None:
-        expanded = [additional_forward_args] * n_steps
+        expanded = [deepcopy(additional_forward_args)] * n_steps
         return expanded
     else:
         for i in range(n_steps):
             curr_expanded = []
             edges_lists = deepcopy(additional_forward_args[_EDGE_LISTS_IDX])
             pos_lists = deepcopy(additional_forward_args[_POS_LISTS_IDX])
-            edge_lists_wo_removed_edges, expanded_pos_lists_wo_removed_edges = _remove_edges(
+            edge_lists_wo_removed_edges, pos_lists_wo_removed_edges = _remove_edges(
                 edge_lists=edges_lists, pos_lists=pos_lists, removed_nodes=removed_nodes_seq[i])
             for j in range(len(additional_forward_args)):
                 if j not in {_EDGE_LISTS_IDX, _POS_LISTS_IDX}:
@@ -277,7 +261,7 @@ def _expand_additional_forward_args(
                     if j == _EDGE_LISTS_IDX:
                         curr_expanded.append(edge_lists_wo_removed_edges)
                     if j == _POS_LISTS_IDX:
-                        curr_expanded.append(expanded_pos_lists_wo_removed_edges)
+                        curr_expanded.append(pos_lists_wo_removed_edges)
             expanded.append(tuple(curr_expanded))
 
         return expanded
