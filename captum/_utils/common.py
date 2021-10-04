@@ -4,6 +4,7 @@ from enum import Enum
 from functools import reduce
 from inspect import signature
 from typing import Any, Callable, Dict, List, Tuple, Union, cast, overload
+from copy import deepcopy
 
 import numpy as np
 import torch
@@ -22,6 +23,7 @@ from captum._utils.typing import (
 class ExpansionTypes(Enum):
     repeat = 1
     repeat_interleave = 2
+    guided_ig_edge_removal = 3
 
 
 def safe_div(
@@ -197,11 +199,47 @@ def _format_additional_forward_args(additional_forward_args: Any) -> Union[None,
     return additional_forward_args
 
 
+def _remove_edges(
+    edge_lists,
+    pos_lists,
+    removed_nodes,
+) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
+    new_edge_lists = []
+    new_pos_lists = []
+
+    for i in range(len(edge_lists)):
+        edge_list = edge_lists[i]
+        new_edge_list = []
+        new_pos_list = []
+
+        for j in range(len(edge_list)):
+            tail, head = edge_list[j]
+            if tail.item() in set(removed_nodes) or head.item() in set(removed_nodes):
+                continue
+            else:
+                new_edge_list.append(edge_lists[i][j])
+                new_pos_list.append(pos_lists[i][j])
+
+        if new_edge_list == [] and new_pos_list == []:
+            new_edge_lists.append(torch.empty(
+                (0, edge_lists[i].shape[1]), device=edge_lists[i].device, dtype=edge_lists[i].dtype))
+            new_pos_lists.append(torch.empty(
+                0, device=pos_lists[i].device, dtype=pos_lists[i].dtype))
+        else:
+            new_edge_lists.append(torch.stack(new_edge_list))
+            new_pos_lists.append(torch.stack(new_pos_list))
+
+    return new_edge_lists, new_pos_lists
+
+
 def _expand_additional_forward_args(
     additional_forward_args: Any,
     n_steps: int,
-    expansion_type: ExpansionTypes = ExpansionTypes.repeat,
+    removed_nodes_seq: List[List[int]] = None,
 ) -> Union[None, Tuple]:
+    _EDGE_LISTS_IDX = 1
+    _POS_LISTS_IDX = 3
+
     def _expand_tensor_forward_arg(
         additional_forward_arg: Tensor,
         n_steps: int,
@@ -215,19 +253,34 @@ def _expand_additional_forward_args(
             return additional_forward_arg.repeat_interleave(n_steps, dim=0)
         else:
             raise NotImplementedError(
-                "Currently only `repeat` and `repeat_interleave`"
-                " expansion_types are supported"
+                "Currently only `repeat` and `repeat_interleave` expansion_types are supported"
             )
 
     if additional_forward_args is None:
         return None
 
-    return tuple(
-        _expand_tensor_forward_arg(additional_forward_arg, n_steps, expansion_type)
-        if isinstance(additional_forward_arg, torch.Tensor)
-        else additional_forward_arg
-        for additional_forward_arg in additional_forward_args
-    )
+    expanded = []
+    if removed_nodes_seq is None:
+        expanded = [additional_forward_args] * n_steps
+        return expanded
+    else:
+        for i in range(n_steps):
+            curr_expanded = []
+            edges_lists = deepcopy(additional_forward_args[_EDGE_LISTS_IDX])
+            pos_lists = deepcopy(additional_forward_args[_POS_LISTS_IDX])
+            edge_lists_wo_removed_edges, expanded_pos_lists_wo_removed_edges = _remove_edges(
+                edge_lists=edges_lists, pos_lists=pos_lists, removed_nodes=removed_nodes_seq[i])
+            for j in range(len(additional_forward_args)):
+                if j not in {_EDGE_LISTS_IDX, _POS_LISTS_IDX}:
+                    curr_expanded.append(deepcopy(additional_forward_args[j]))
+                else:
+                    if j == _EDGE_LISTS_IDX:
+                        curr_expanded.append(edge_lists_wo_removed_edges)
+                    if j == _POS_LISTS_IDX:
+                        curr_expanded.append(expanded_pos_lists_wo_removed_edges)
+            expanded.append(tuple(curr_expanded))
+
+        return expanded
 
 
 def _expand_target(
